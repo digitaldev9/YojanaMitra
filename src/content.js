@@ -89,7 +89,7 @@ const pageLabels = {
   'Annual family income (₹, optional)': ['वार्षिक पारिवारिक आय (₹, वैकल्पिक)', 'वार्षिक कौटुंबिक उत्पन्न (₹, ऐच्छिक)'],
   'Find matching schemes': ['उपयुक्त योजनाएँ खोजें', 'जुळणाऱ्या योजना शोधा'],
   'Saved schemes': ['सहेजी गई योजनाएँ', 'जतन केलेल्या योजना'],
-  'About YojanaSetu': ['योजनासेतु के बारे में', 'योजनासेतूविषयी'],
+  'About YojanaMitra': ['योजनामित्र के बारे में', 'योजनामित्राविषयी'],
 }
 export const translate = (language, label) =>
   translations[language]?.[labels.indexOf(label)] || pageLabels[label]?.[['hi', 'mr'].indexOf(language)] || label

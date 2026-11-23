@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { ArrowLeft, ArrowRight, Bookmark, ClipboardCheck, ExternalLink, FileDown, FileText } from 'lucide-react'
 import { ResultState, useResearch } from './research'
 
-const UNKNOWN = 'Not confirmed from available sources.'
+const UNKNOWN = 'Not verified.'
 
 const fields = [
   ['eligibility', 'Eligibility requirements'], ['benefits', 'Benefits'],
@@ -30,15 +30,62 @@ function ResultCards({ schemes, openDetail, matched }) {
 }
 
 export function SearchResults({ t, query, category, openDetail, search }) {
-  const result = useResearch(query ? { mode: 'search', query, category } : null)
+  const [text, setText] = useState(query)
+  const [submitted, setSubmitted] = useState(query)
+  const [state, setState] = useState('')
+  const [scope, setScope] = useState('')
+  const [benefit, setBenefit] = useState('')
+  const [page, setPage] = useState(1)
+  const queryParams = new URLSearchParams({ category: category || '', q: submitted, state, scope, benefit, page })
+  const endpoint = '/api/schemes' + (submitted ? '/search' : '') + '?' + queryParams
+  const catalogue = useResearch(null, category ? endpoint : '/api/research')
+  const live = useResearch(null, !category && query ? endpoint : '/api/research')
+  const result = category ? catalogue : live
+  const options = useOptions()
+  const resetFilter = (setter) => (event) => { setter(event.target.value); setPage(1) }
   return <section className="inner shell">
     <a className="text-button" href="#home"><ArrowLeft size={16} /> {t('Home')}</a>
     <h1>{category ? t(category) + ' ' + t('Schemes') : t('Scheme Search')}</h1>
-    {search}
-    {query && <p className="search-summary">Results for “{query}”</p>}
-    <ResultState result={result} />
+    {category ? <div className="panel">
+      <form className="compact-form" onSubmit={(event) => { event.preventDefault(); setSubmitted(text.trim()); setPage(1) }}>
+        <label>Search within {category}<input value={text} maxLength={300} placeholder="Enter a scheme name or benefit"
+          onChange={(event) => { setText(event.target.value); if (!event.target.value.trim()) { setSubmitted(''); setPage(1) } }} /></label>
+        <button className="green">Search</button>
+        {text && <button className="outline" type="button" onClick={() => { setText(''); setSubmitted(''); setPage(1) }}>Clear</button>}
+      </form>
+      <div className="form-grid mt-4">
+        <label>State or union territory<select value={state} onChange={resetFilter(setState)}><option value="">All states</option>
+          {options.data?.state?.map((name) => <option key={name}>{name}</option>)}</select></label>
+        <label>Government<select value={scope} onChange={resetFilter(setScope)}><option value="">Central and state</option><option>Central</option><option>State</option></select></label>
+        <label>Benefit type<select value={benefit} onChange={resetFilter(setBenefit)}><option value="">All benefits</option>
+          {result.data?.benefits?.map((name) => <option key={name}>{name}</option>)}</select></label>
+      </div>
+      <a className="green mt-4" href={'#eligibility?' + new URLSearchParams({ category })}>Find Schemes for Me <ArrowRight size={17} /></a>
+    </div> : search}
+    {result.data?.total !== undefined && <p role="status">{result.data.total} schemes found</p>}
+    <ResultState result={result} empty="No verified schemes matched these filters." />
     <ResultCards schemes={result.data?.schemes} openDetail={openDetail} />
+    {(category || query) && (page > 1 || result.data?.has_more) && <nav className="flex gap-3 mt-4" aria-label="Scheme pages">
+      <button className="outline" disabled={page === 1 || result.loading} onClick={() => setPage(page - 1)}>Previous</button>
+      <span className="self-center">Page {page}</span>
+      <button className="outline" disabled={!result.data?.has_more} onClick={() => setPage(page + 1)}>Next</button>
+    </nav>}
   </section>
+}
+
+function useOptions() {
+  const [result, setResult] = useState({})
+  useEffect(() => {
+    const controller = new AbortController()
+    fetch('/api/options', { signal: controller.signal }).then((response) => {
+      if (!response.ok) throw new Error('Profile options are unavailable. Check the local server and reload.')
+      return response.json()
+    }).then((data) => setResult({ data })).catch((error) => {
+      if (error.name !== 'AbortError') setResult({ error: error.message })
+    })
+    return () => controller.abort()
+  }, [])
+  return result
 }
 
 const profileFields = [
@@ -46,54 +93,69 @@ const profileFields = [
   ['category', 'Category'], ['gender', 'Gender (optional)'], ['interest', 'Interest'],
 ]
 
-export function Eligibility({ t, openDetail }) {
-  const [options, setOptions] = useState(null)
-  const [optionsError, setOptionsError] = useState('')
+export function Eligibility({ t, openDetail, category, schemeId }) {
+  const { data: options, error: optionsError } = useOptions()
+  const [step, setStep] = useState(1)
+  const [basic, setBasic] = useState(null)
   const [profile, setProfile] = useState(null)
-  const result = useResearch(profile ? { mode: 'eligibility', profile } : null)
-  useEffect(() => {
-    const controller = new AbortController()
-    fetch('/api/options', { signal: controller.signal }).then((response) => {
-      if (!response.ok) throw new Error('Profile options are unavailable. Check the local server and reload.')
-      return response.json()
-    }).then(setOptions).catch((error) => { if (error.name !== 'AbortError') setOptionsError(error.message) })
-    return () => controller.abort()
-  }, [])
+  const [benefit, setBenefit] = useState("")
+  const benefitOptions = useResearch(null, category ? "/api/schemes?category=" + encodeURIComponent(category) + "&limit=1" : "/api/research")
+  const result = useResearch(profile ? { profile, category, benefit, scheme_id: schemeId } : null, profile ? '/api/eligibility/match' : '/api/research')
+  const next = (event) => {
+    event.preventDefault()
+    const values = Object.fromEntries(new FormData(event.currentTarget))
+    setBasic({ age: Number(values.age), state: values.state, income: values.income === '' ? null : Number(values.income) })
+    setStep(2)
+  }
   const submit = (event) => {
     event.preventDefault()
-    const form = Object.fromEntries(new FormData(event.currentTarget))
-    setProfile({ ...form, age: Number(form.age), income: form.income === '' ? null : Number(form.income), gender: form.gender || null })
+    const values = Object.fromEntries(new FormData(event.currentTarget))
+    setBenefit(values.benefit || "")
+    setProfile({ ...basic, occupation: values.occupation || (category === 'Students' ? 'Student' : category === 'Farmers' ? 'Farmer' : 'Other'),
+      education: values.education || 'Other', category: values.category || 'Prefer not to say',
+      gender: category === 'Women' ? 'Woman' : null, interest: values.interest || 'All Schemes' })
   }
   return <section className="inner shell">
     <h1><ClipboardCheck /> {t('Eligibility Checker')}</h1>
-    <p>Compare your profile with published eligibility conditions. The official scheme administrator makes the final decision.</p>
-    {optionsError ? <p role="alert" className="result-note error">{optionsError}</p> : null}
+    <p>{category ? category + ' · ' : ''}Step {step} of 2</p>
+    {optionsError && <p role="alert">{optionsError}</p>}
     {!options && !optionsError && <p role="status">Loading profile options…</p>}
-    {options && <form className="panel form-grid" onSubmit={submit}>
-      <label>{t('Age')}<input name="age" type="number" min="0" max="120" step="1" required defaultValue="18" /></label>
-      <label>{t('Annual family income (₹, optional)')}<input name="income" type="number" min="0" max="1000000000" step="1" /></label>
-      {profileFields.map(([key, label]) => <label key={key}>{t(label)}
-        <select name={key} defaultValue={key === 'category' ? 'Prefer not to say' : ''} required={key !== 'gender'}>
-          <option value="">{key === 'gender' ? 'Unspecified' : 'Select an option'}</option>
-          {options[key]?.map((value) => <option key={value}>{value}</option>)}
-        </select>
-      </label>)}
-      <button className="green" disabled={result.loading}>{t('Find matching schemes')} <ArrowRight size={17} /></button>
-    </form>}
-    <ResultState result={result} />
-    <ResultCards schemes={result.data?.schemes} openDetail={openDetail} matched />
+    {options && (step === 1 ? <form className="panel form-grid" onSubmit={next}>
+      <label>Age<input name="age" type="number" min="0" max="120" required defaultValue={basic?.age ?? 18} /></label>
+      <label>State or union territory<select name="state" required defaultValue={basic?.state || ''}><option value="">Select your state</option>
+        {options.state.map((value) => <option key={value}>{value}</option>)}</select></label>
+      <label>Annual family income (₹, optional)<input name="income" type="number" min="0" max="1000000000" defaultValue={basic?.income ?? ''} /></label>
+      <button className="green">Continue <ArrowRight size={17} /></button>
+    </form> : <form className="panel form-grid" onSubmit={submit}>
+      {profileFields.filter(([key]) => key === 'category' || (key === 'education' && (!category || category === 'Students')) ||
+        (key === 'occupation' && (!category || category === 'Women')) || (key === 'interest' && !category)).map(([key, label]) => <label key={key}>{label}
+          <select name={key} defaultValue={profile?.[key] || ''}><option value="">Prefer not to say</option>
+            {options[key].filter((value) => value !== 'Prefer not to say').map((value) => <option key={value}>{value}</option>)}</select>
+        </label>)}
+      {category && <label>What help are you looking for?<select name="benefit" defaultValue={benefit}>
+        <option value="">All benefits</option>
+        {benefitOptions.data?.benefits?.map((value) => <option key={value}>{value}</option>)}
+      </select></label>}
+      <div className="flex gap-3"><button type="button" className="outline" onClick={() => setStep(1)}>Back</button>
+        <button className="green" disabled={result.loading}>Find matching schemes</button></div>
+    </form>)}
+    <ResultState result={result} empty="No catalogue schemes matched this selection." />
+    {[['Likely Eligible', /^Likely/], ['More Information Needed', /^Possibly/], ['Not Eligible', /^Not Eligible/]].map(([label, pattern]) => {
+      const items = result.data?.schemes.filter((scheme) => pattern.test(scheme.status))
+      return items?.length ? <section key={label} className="mt-4"><h2>{label} ({items.length})</h2><ResultCards schemes={items} openDetail={openDetail} matched /></section> : null
+    })}
   </section>
 }
 
-function useScheme(name, scheme) {
-  const result = useResearch(name && !scheme ? { mode: 'search', query: name } : null)
+function useScheme(name, scheme, schemeId) {
+  const result = useResearch(name && !scheme && !schemeId ? { mode: 'search', query: name } : null, !scheme && schemeId ? '/api/schemes/' + encodeURIComponent(schemeId) : '/api/research')
   const match = result.data?.schemes.find((item) => item.name.toLowerCase() === name.toLowerCase())
   return [scheme || match, result]
 }
 
-export function SchemeDetail({ t, name, scheme, isSaved, toggleSaved }) {
-  const [selected, result] = useScheme(name, scheme)
-  const full = useResearch(selected ? { mode: 'details', query: selected.name, source: selected.sources[0]?.url } : null)
+export function SchemeDetail({ t, name, scheme, schemeId, isSaved, toggleSaved }) {
+  const [selected, result] = useScheme(name, scheme, schemeId)
+  const full = useResearch(selected ? { mode: 'details', query: selected.name, source: selected.sources[0]?.url, scheme_id: selected.id } : null)
   const details = full.data?.details
   const sources = [...(details?.sources || []), ...(selected?.sources || [])]
     .filter((source, index, list) => list.findIndex((item) => item.url === source.url) === index)
@@ -107,6 +169,9 @@ export function SchemeDetail({ t, name, scheme, isSaved, toggleSaved }) {
       <span className="eyebrow">{[selected.category, selected.scope, selected.department].filter(Boolean).join(' · ')}</span>
       {full.loading && <p role="status">Loading details from official sources…</p>}
       {!full.loading && (!details?.sources.length || full.error) && <p>Full details could not be loaded. The available search information is shown below.</p>}
+      {selected.last_verified && <p>Official source checked {selected.last_verified}</p>}
+      {selected.reasons?.length > 0 && <section><h2>Your eligibility result</h2><strong>{selected.status}</strong>
+        <ul>{[...selected.reasons, ...selected.missing].map((reason, index) => <li key={index}>{reason}</li>)}</ul></section>}
       <h2>Overview</h2>
       {(sections.overview || [selected.description]).map((line, index) => <p key={index}>{line}</p>)}
       <div className="form-grid">
@@ -128,7 +193,8 @@ export function SchemeDetail({ t, name, scheme, isSaved, toggleSaved }) {
       <ul>{sources.map((source) => <li key={source.url}><a href={source.url} target="_blank" rel="noreferrer">{source.title}</a></li>)}</ul>
       <div className="flex flex-wrap gap-3">
         {application && <a className="green" href={application} target="_blank" rel="noreferrer">Apply on official portal <ExternalLink size={16} /></a>}
-        <a className="outline" href={'#application?' + new URLSearchParams({ name: selected.name })}><FileText size={17} /> Prepare application</a>
+        <a className="outline" href={'#eligibility?' + new URLSearchParams(selected.id ? { id: selected.id } : {})}>Check My Eligibility</a>
+        <a className="outline" href={'#application?' + new URLSearchParams({ name: selected.name, ...(selected.id ? { id: selected.id } : {}) })}><FileText size={17} /> Prepare My Application</a>
         <button className="outline" aria-pressed={isSaved(selected)} onClick={() => toggleSaved(selected)}><Bookmark size={17} /> {isSaved(selected) ? 'Saved' : 'Save scheme'}</button>
       </div>
     </div>}
@@ -136,28 +202,22 @@ export function SchemeDetail({ t, name, scheme, isSaved, toggleSaved }) {
   </section>
 }
 
-export function Application({ t, name, scheme }) {
+export function Application({ t, name, scheme, schemeId }) {
   const [query, setQuery] = useState('')
   const [request, setRequest] = useState('')
   const [picked, setPicked] = useState(null)
-  const [selected, detailResult] = useScheme(name, scheme)
+  const [selected, detailResult] = useScheme(name, scheme, schemeId)
   const matches = useResearch(request ? { mode: 'search', query: request } : null)
   const target = picked || selected
-  const download = (event) => {
+  const [review, setReview] = useState(null)
+  const full = useResearch(target ? { mode: 'details', query: target.name, source: target.sources[0]?.url, scheme_id: target.id } : null)
+  const details = full.data?.details
+  const documents = details?.sections?.documents || target?.fields.documents || []
+  const prepare = (event) => {
     event.preventDefault()
-    if (!target) return
     const form = new FormData(event.currentTarget)
-    const completed = form.getAll('document')
-    const checklist = (target.fields.documents || []).map((document) => (completed.includes(document) ? '☑ ' : '☐ ') + document)
-    const text = ['YojanaSetu application preparation', target.name, 'Applicant: ' + form.get('applicant'),
-      'State: ' + form.get('state'), 'Notes: ' + form.get('notes'), '', ...checklist, '',
-      'Official source: ' + (target.application_url || target.sources[0].url)].join('\n')
-    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }))
-    const link = document.createElement('a')
-    link.href = url
-    link.download = 'yojanasetu-application-checklist.txt'
-    link.click()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    setReview({ name: target.name, applicant: form.get('applicant').trim(), state: form.get('state').trim(),
+      notes: form.get('notes'), documents: documents.map((item) => ({ item, checked: form.getAll('document').includes(item) })) })
   }
   return <section className="inner shell">
     <h1><FileText /> {t('Application Assistant')}</h1>
@@ -175,25 +235,31 @@ export function Application({ t, name, scheme }) {
       <h2>{target.name}</h2>
       <p>{target.description}</p>
       <OfficialLink scheme={target} />
-      <form onSubmit={download} className="form-grid mt-5">
+      <form onSubmit={prepare} className="form-grid mt-5">
         <label>Applicant name<input name="applicant" required minLength={2} maxLength={100} /></label>
         <label>State or union territory<input name="state" required minLength={2} maxLength={100} /></label>
         <label className="full">Preparation notes (optional)<textarea name="notes" maxLength={1000} /></label>
         <fieldset className="full"><legend>Published documents</legend>
-          {target.fields.documents?.length ? target.fields.documents.map((item) => <label className="check" key={item}><input type="checkbox" name="document" value={item} />{item}</label>)
+          {documents.length ? documents.map((item) => <label className="check" key={item}><input type="checkbox" name="document" value={item} />{item}</label>)
             : <p>{UNKNOWN} Review the official source for a complete list.</p>}
         </fieldset>
-        <button className="green"><FileDown size={17} /> Download preparation checklist</button>
+        <button className="green"><FileDown size={17} /> Review application checklist</button>
       </form>
     </div>}
+    {review && <section className="panel application-print" aria-label="Application review">
+      <h2>{review.name}</h2>
+      <p>Applicant: {review.applicant}</p><p>State: {review.state}</p><p>{review.notes}</p>
+      <ul>{review.documents.map(({ item, checked }, index) => <li key={index}>{checked ? 'Ready: ' : 'Pending: '}{item}</li>)}</ul>
+      <button className="green print-hide mt-4" onClick={() => window.print()}><FileDown size={17} /> Print or Save as PDF</button>
+    </section>}
   </section>
 }
 
 export function About({ t }) {
   return <section className="inner shell">
-    <h1>{t('About YojanaSetu')}</h1>
+    <h1>{t('About YojanaMitra')}</h1>
     <div className="panel detail">
-      <p>YojanaSetu helps people discover Indian government schemes. It uses You.com to find official pages and highlights, then shows the available eligibility, benefits, documents and application details with source links.</p>
+      <p>YojanaMitra helps people discover Indian government schemes. It uses You.com to find official pages and highlights, then shows the available eligibility, benefits, documents and application details with source links.</p>
       <p>Eligibility Checker compares explicit published rules with your profile. Application Assistant prepares a checklist you can download and use with the official application.</p>
       <p>Confirm eligibility, deadlines and application procedures with the relevant government department.</p>
     </div>

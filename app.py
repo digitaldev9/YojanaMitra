@@ -11,12 +11,12 @@ from utils.helpers import CATEGORIES, EDUCATION, GENDERS, INTERESTS, OCCUPATIONS
 
 
 load_dotenv(Path(__file__).with_name(".env"))
-st.set_page_config(page_title="SchemeSetu AI", page_icon="🔎", layout="wide")
+st.set_page_config(page_title="YojanaMitra", page_icon="🔎", layout="wide")
 
 st.html("""
 <style>
 .stMainBlockContainer { max-width: 1120px; padding-top: 3rem; }
-.schemesetu-hero {
+.yojanamitra-hero {
   background: radial-gradient(ellipse at 95% 110%, #08756b 0%, transparent 66%),
               linear-gradient(125deg, #102641, #173a53);
   padding: clamp(1.5rem, 5vw, 3.5rem);
@@ -25,12 +25,12 @@ st.html("""
   color: #fff;
   margin-bottom: .9rem;
 }
-.schemesetu-hero h1 {
+.yojanamitra-hero h1 {
   color: #fff; font-size: clamp(2.5rem, 7vw, 4.8rem);
   line-height: 1.05; letter-spacing: -.065em; margin: 0 0 .65rem; padding: 0;
 }
-.schemesetu-hero p { color: #e5f3f1; max-width: 38rem; margin: 0 0 .9rem; font-size: 1.05rem; }
-.schemesetu-hero .tagline { font-size: 1.25rem; font-weight: 650; color: #fff; }
+.yojanamitra-hero p { color: #e5f3f1; max-width: 38rem; margin: 0 0 .9rem; font-size: 1.05rem; }
+.yojanamitra-hero .tagline { font-size: 1.25rem; font-weight: 650; color: #fff; }
 .research-indicator {
   display: inline-block; background: #d6f6ec; color: #164940; border-radius: 999px;
   padding: .3rem .85rem; font-weight: 650; font-size: .82rem;
@@ -43,8 +43,8 @@ st.html("""
 [data-testid="stText"] { white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; }
 [data-testid="stText"] pre { white-space: inherit; font-family: inherit; }
 </style>
-<header class="schemesetu-hero">
-  <h1>SchemeSetu AI</h1>
+<header class="yojanamitra-hero">
+  <h1>YojanaMitra</h1>
   <p class="tagline">Your eligibility. Your opportunities. One search.</p>
   <p>Discover scholarships and government benefits you may qualify for.</p>
   <span class="research-indicator">Powered by You.com Live Research</span>
@@ -159,7 +159,7 @@ if "last_search" in st.session_state:
     else:
         st.info("This search returned no identifiable scheme pages from official sources. Try a broader interest or check your state’s portal.")
 
-with st.expander("How SchemeSetu AI works"):
+with st.expander("How YojanaMitra works"):
     st.markdown("""
 1. We search current web information through You.com.
 2. We prioritize official government sources.
@@ -167,4 +167,4 @@ with st.expander("How SchemeSetu AI works"):
 4. We provide official links for final verification.
     """.strip())
     st.caption("Search sends your state, interest and student education level or occupation to You.com.")
-st.caption("SchemeSetu AI is an information discovery assistant, not an official government portal. Eligibility and deadlines must be confirmed on the relevant government website.")
+st.caption("YojanaMitra is an information discovery assistant, not an official government portal. Eligibility and deadlines must be confirmed on the relevant government website.")

@@ -9,7 +9,7 @@ import { ResultState, useResearch } from './research'
 import './styles.css'
 
 const makeRoute = (page, params = {}) => '#' + page + (Object.keys(params).length ? '?' + new URLSearchParams(params) : '')
-const searchRoute = (query, category) => makeRoute('results', category ? { q: query, category } : { q: query })
+const searchRoute = (query, category) => makeRoute('results', category ? { category } : { q: query })
 const ALL_QUERY = 'government schemes national state scholarships welfare agriculture skills'
 const getRoute = () => {
   const [page, raw] = (location.hash.slice(1) || 'home').split('?')
@@ -46,9 +46,9 @@ function Header({ t, language, setLanguage, voice, onSearch, profile, openAccoun
   const closeNav = () => { setMobileOpen(false); setMenuOpen(false) }
   return <header className="topbar">
     <div className="navbar">
-      <a className="brand" href="#home" onClick={closeNav} aria-label="YojanaSetu home">
+      <a className="brand" href="#home" onClick={closeNav} aria-label="YojanaMitra home">
         <span className="brand-mark"><Sprout size={49} strokeWidth={2.8} /></span>
-        <span><strong>Yojana<span>Setu</span></strong><small>{t('Your Guide to Government Schemes')}</small></span>
+        <span><strong>Yojana<span>Mitra</span></strong><small>{t('Your Guide to Government Schemes')}</small></span>
       </a>
       <button className="circle mobile-menu" aria-label="Toggle navigation" aria-expanded={mobileOpen} onClick={() => setMobileOpen(!mobileOpen)}><Menu /></button>
       <nav aria-label="Main navigation" className={mobileOpen ? 'nav-links open' : 'nav-links'}>
@@ -145,10 +145,10 @@ function Chat({ t, openDetail }) {
     if (!followUp) setContext(clean)
     setQuery('')
   }
-  if (!open) return <button className="chat-launch green" aria-label="Open Yojana Saathi" onClick={() => setOpen(true)}><Bot size={25} /> Yojana Saathi</button>
+  if (!open) return <button className="chat-launch green" aria-label="Open YojanaMitra" onClick={() => setOpen(true)}><Bot size={25} /> YojanaMitra</button>
   const isDocuments = request && /document/i.test(request.query)
-  return <aside className="chat" aria-label="Yojana Saathi">
-    <div className="chat-head"><img className="bot-avatar" src="/art/saathi.webp" alt="" /><div><h2>Yojana Saathi</h2><p>{t('Your AI Government Scheme Assistant')}</p></div>
+  return <aside className="chat" aria-label="YojanaMitra">
+    <div className="chat-head"><img className="bot-avatar" src="/art/saathi.webp" alt="" /><div><h2>YojanaMitra</h2><p>{t('Your AI Government Scheme Assistant')}</p></div>
       <button className="plain-icon" aria-label="Close assistant" onClick={() => setOpen(false)}><X size={20} /></button></div>
     <div className="chat-body" aria-live="polite">
       <p className="chat-bubble">{t('How can I help you today?')}</p>
@@ -226,7 +226,7 @@ function App() {
   }
   const openDetail = (scheme) => {
     setDetail(scheme)
-    location.hash = makeRoute('detail', { name: scheme.name })
+    location.hash = makeRoute('detail', { name: scheme.name, ...(scheme.id ? { id: scheme.id } : {}) })
   }
   function voice(callback) {
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition
@@ -248,6 +248,7 @@ function App() {
   const { page, params } = route
   const query = params.get('q') || ''
   const detailName = params.get('name') || ''
+  const schemeId = params.get('id') || ''
   const currentDetail = detail?.name === detailName ? detail : saved.find((scheme) => scheme.name === detailName)
   return <MotionConfig reducedMotion="user">
     <a className="skip-link" href="#main-content" onClick={(event) => { event.preventDefault(); document.getElementById('main-content')?.focus() }}>Skip to main content</a>
@@ -258,9 +259,9 @@ function App() {
       {page === 'home' && <Home t={t} voice={voice} onSearch={onSearch} openDetail={openDetail} languageRef={languageRef} />}
       {page === 'results' && <SearchResults key={params.toString()} t={t} query={query} category={params.get('category')} openDetail={openDetail}
         search={<SearchBar t={t} voice={voice} onSearch={onSearch} initial={query} />} />}
-      {page === 'eligibility' && <Eligibility t={t} openDetail={openDetail} />}
-      {page === 'application' && <Application t={t} name={detailName} scheme={currentDetail} />}
-      {page === 'detail' && <SchemeDetail t={t} name={detailName} scheme={currentDetail} isSaved={isSaved} toggleSaved={toggleSaved} />}
+      {page === 'eligibility' && <Eligibility key={params.toString()} t={t} openDetail={openDetail} category={params.get("category")} schemeId={schemeId} />}
+      {page === 'application' && <Application t={t} schemeId={schemeId} name={detailName} scheme={currentDetail} />}
+      {page === 'detail' && <SchemeDetail t={t} schemeId={schemeId} name={detailName} scheme={currentDetail} isSaved={isSaved} toggleSaved={toggleSaved} />}
       {page === 'about' && <About t={t} />}
       {page === 'saved' && <section className="inner shell"><h1><Bookmark /> {t('Saved schemes')}</h1>
         {saved.length ? <div className="results-grid">{saved.map((scheme) => <article className="result-card" key={scheme.sources[0].url}>
@@ -275,7 +276,7 @@ function App() {
         </article>)}</div> : <p>Save a scheme from its detail page to track it here.</p>}</section>}
       {!['home', 'results', 'eligibility', 'application', 'detail', 'about', 'saved'].includes(page) && <section className="inner shell"><h1>Page unavailable</h1><a href="#home">Return home</a></section>}
     </main>
-    <footer>YojanaSetu is an independent discovery assistant. Verify application requirements on the official source.</footer>
+    <footer>YojanaMitra is an independent discovery assistant. Verify application requirements on the official source.</footer>
     <Chat t={t} openDetail={openDetail} />
     {showAccount && <Account name={profile} onClose={() => setShowAccount(false)} onSave={(name) => { setProfile(name); persist('ys-profile', name); setShowAccount(false) }} />}
   </MotionConfig>

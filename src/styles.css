@@ -253,3 +253,10 @@ footer { max-width: 1120px; margin: 25px auto 0; padding: 12px 22px 34px; text-a
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+@media print {
+  body:has(.application-print) * { visibility: hidden; }
+  .application-print, .application-print * { visibility: visible !important; }
+  .application-print { position: absolute; inset: 0; width: 100%; border: none; box-shadow: none; }
+  .application-print .print-hide { display: none; }
+}

@@ -10,13 +10,14 @@ from difflib import get_close_matches
 from functools import lru_cache, partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import requests
 from dotenv import load_dotenv
 
+from services import catalogue
 from services.scheme_details import extract_page, myscheme_page, parse_details
-from services.scheme_matcher import discover, read_evidence, scheme_name
+from services.scheme_matcher import discover, evaluate, read_evidence, scheme_name
 from services.you_api import ResearchError, Source, research
 from utils.helpers import CATEGORIES, EDUCATION, GENDERS, INTERESTS, OCCUPATIONS, STATES, Profile, official_host, search_queries
 
@@ -63,7 +64,7 @@ ARTICLE_TITLE = re.compile(
     r"everything you need to know|how to apply)\b", re.I,
 )
 BROAD_SEARCH = re.compile(
-    r"^(?:scholarships?|women empowerment|farmer subsidy|startup support|maternity benefit|"
+    r"^(?:(?:student )?scholarships?|women empowerment|farmer subsidy|startup support|maternity benefit|"
     r"government schemes\b.*)$|\b(?:schemes? for|scholarships? for|benefits? for|"
     r"loans? for|subsid(?:y|ies) for|how (?:do|can)|looking for)\b", re.I,
 )
@@ -112,14 +113,15 @@ def search_candidates(sources: list[Source], query: str, category: str | None):
         official = next((source for source in sources if source.url.rstrip("/") == SHAHU.url.rstrip("/")), SHAHU)
         return discover([Source(SHAHU.title, SHAHU.url, SHAHU.description, official.highlights)])
     pages = [source for source in sources if is_scheme_page(source)]
-    if category == "Students":
-        pages = [source for source in pages if STUDENT_SCHEME.search(scheme_name(source) or "")]
-    elif not category and not BROAD_SEARCH.search(query):
+    if category:
+        audience = catalogue.AUDIENCES[category]
+        pages = [source for source in pages if re.search(audience, (scheme_name(source) or "") + " " + source.description, re.I)]
+    if not BROAD_SEARCH.search(query):
         terms = set(name_words(query))
         matches = [source for source in pages if terms and terms.issubset(name_words(scheme_name(source) or ""))]
         exact = [source for source in matches if name_words(scheme_name(source) or "") == name_words(query)]
         if exact or matches:
-            return discover(exact or matches, query=query)[:1]
+            return discover(exact or matches, query=query, limit=1 if exact or not category else None)
         close = discover([source for source in pages if close_scheme_name(query, scheme_name(source) or "")], query=query)
         return close if len(close) == 1 else []
     return discover(pages, query=query)
@@ -183,6 +185,11 @@ def detailed_scheme(body, api_key):
         ])
         details["application_url"] = "https://mahadbt2.maharashtra.gov.in/"
         details["portal_url"] = SHAHU_PORTAL
+    scheme_id = body.get("scheme_id")
+    if scheme_id and details["sources"]:
+        stored = catalogue.get(scheme_id)
+        if stored and stored["name"] == name and stored["sources"][0]["url"] == body.get("source"):
+            catalogue.enrich(scheme_id, details)
     return {"schemes": [], "warnings": [], "details": details}
 
 
@@ -223,13 +230,7 @@ def run_research(body: dict) -> dict:
                 f"site:myscheme.gov.in/schemes India government scheme {query}",
                 f"site:gov.in India government scheme {query}",
             )
-            if category == "Students":
-                queries = (
-                    "site:myscheme.gov.in/schemes student scholarship education fee eligibility",
-                    "site:mahadbt.maharashtra.gov.in/SchemeData student scholarship freeship eligibility",
-                    "site:web.umang.gov.in/landing/scheme/detail student scholarship education loan eligibility",
-                )
-            elif mode == "search" and shahu_lookup(query):
+            if mode == "search" and shahu_lookup(query):
                 queries = (f'site:dte.maharashtra.gov.in "Rajarshi Chhatrapati Shahu Maharaj" scholarship',)
         else:
             raise ValueError("Unknown research mode.")
@@ -251,9 +252,112 @@ def run_research(body: dict) -> dict:
     return {"schemes": schemes, "warnings": warnings}
 
 
+def refresh_category(category, api_key):
+    with catalogue.LOCKS[category]:
+        if catalogue.fresh(category):
+            return []
+        queries = tuple(f"site:{portal} {query}" for _, portal, query in catalogue.CATEGORY_TOPICS[category])
+        sources, warnings = research(queries, api_key)
+        evidence = catalogue.AUDIENCES[category]
+        pages = [source for source in sources if is_scheme_page(source) and
+                 re.search(evidence, (scheme_name(source) or "") + " " + source.description, re.I)]
+        if category == "Students":
+            pages.append(SHAHU)
+        if pages:
+            catalogue.save(discover(pages, limit=None), category)
+            catalogue.mark_refreshed(category)
+        return warnings
+
+
+def catalogue_response(params, do_search=False):
+    category = params.get("category", "").title() or None
+    if category and category not in catalogue.CATEGORY_TOPICS:
+        raise ValueError("Unknown scheme category.")
+    query = params.get("q", "").strip()
+    if len(query) > 300:
+        raise ValueError("Search text is too long.")
+    page = max(1, int(params.get("page", 1)))
+    size = min(24, max(1, int(params.get("limit", 12))))
+    filters = dict(category=category, state=params.get("state", ""), scope=params.get("scope", ""),
+                   benefit=params.get("benefit", ""), query=query, page=page, size=size)
+    warnings = []
+    exact = []
+    api_key = os.getenv("YOU_API_KEY", "").strip()
+    try:
+        if do_search and query and page == 1:
+            queries = (f"site:myscheme.gov.in/schemes {query}", f"site:gov.in {query} scheme eligibility")
+            if shahu_lookup(query):
+                queries = (f'site:dte.maharashtra.gov.in "Rajarshi Chhatrapati Shahu Maharaj" scholarship',)
+            try:
+                sources, warnings = research(queries, api_key)
+            except ResearchError:
+                if not shahu_lookup(query):
+                    raise
+                sources = []
+            exact = catalogue.save(search_candidates(sources, query, category), category)
+        elif category and page == 1:
+            warnings = refresh_category(category, api_key)
+    except ResearchError as error:
+        warnings = [str(error)]
+    result = catalogue.list_schemes(**filters)
+    if do_search and exact and (shahu_lookup(query) or not result["total"]) and not any(filters[key] for key in ("state", "scope", "benefit")):
+        result.update(schemes=exact[:size], total=len(exact), has_more=False)
+    result["warnings"] = warnings
+    result["benefits"] = sorted({label for label, _, _ in catalogue.CATEGORY_TOPICS.get(category, ())})
+    return result
+
+
+def match_catalogue(body):
+    profile = Profile(**body.get("profile", {}))
+    category = body.get("category")
+    benefit = body.get("benefit", "")
+    if category is not None and category not in catalogue.CATEGORY_TOPICS:
+        raise ValueError("Unknown scheme category.")
+    scheme_id = body.get("scheme_id")
+    if scheme_id:
+        item = catalogue.get(scheme_id)
+        items = [item] if item else []
+    else:
+        api_key = os.getenv("YOU_API_KEY", "").strip()
+        if category:
+            try:
+                refresh_category(category, api_key)
+            except ResearchError:
+                pass
+        # Match national schemes and candidates with unknown coverage alongside the user's state.
+        items = []
+        page = 1
+        while True:
+            batch = catalogue.list_schemes(category=category, benefit=benefit, page=page, size=50)
+            items.extend(item for item in batch["schemes"] if not item["state"] or item["state"] == profile.state)
+            if not batch["has_more"]:
+                break
+            page += 1
+    if not items and not scheme_id and not category:
+        sources, _ = research(search_queries(profile), os.getenv("YOU_API_KEY", "").strip())
+        items = catalogue.save(discover([source for source in sources if is_scheme_page(source)], profile))
+    for item in items:
+        clauses = [rule["condition"] for rule in item["eligibility_rules"]]
+        status, reasons, missing = evaluate(profile, clauses, bool(item.get("full_eligibility")))
+        item.update(status=status, reasons=reasons, missing=missing)
+    return {"schemes": items, "warnings": []}
+
+
 class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
-        if urlsplit(self.path).path == "/api/options":
+        parsed = urlsplit(self.path)
+        if parsed.path in ("/api/schemes", "/api/schemes/search"):
+            params = {key: values[0] for key, values in parse_qs(parsed.query).items()}
+            try:
+                self.send_json(200, catalogue_response(params, parsed.path.endswith("/search")))
+            except (ValueError, TypeError):
+                self.send_json(400, {"error": "Invalid catalogue filters."})
+            return
+        if parsed.path.startswith("/api/schemes/"):
+            item = catalogue.get(parsed.path.rsplit("/", 1)[-1])
+            self.send_json(200 if item else 404, {"schemes": [item], "warnings": []} if item else {"error": "Scheme not found."})
+            return
+        if parsed.path == "/api/options":
             self.send_json(200, dict(state=STATES, occupation=OCCUPATIONS, education=EDUCATION,
                                      category=CATEGORIES, gender=GENDERS, interest=INTERESTS))
             return
@@ -273,7 +377,8 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(encoded)
 
     def do_POST(self):
-        if urlsplit(self.path).path != "/api/research":
+        path = urlsplit(self.path).path
+        if path not in ("/api/research", "/api/eligibility/match"):
             self.send_json(404, {"error": "Unknown endpoint."})
             return
         try:
@@ -285,7 +390,7 @@ class Handler(SimpleHTTPRequestHandler):
             body = json.loads(self.rfile.read(length))
             if not isinstance(body, dict):
                 raise ValueError("Expected a JSON object.")
-            self.send_json(200, run_research(body))
+            self.send_json(200, match_catalogue(body) if path == "/api/eligibility/match" else run_research(body))
         except (TypeError, ValueError, UnicodeDecodeError):
             self.send_json(400, {"error": "Check the profile or search text and try again."})
         except ResearchError as error:
@@ -297,8 +402,9 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8502)
     args = parser.parse_args()
     load_dotenv(ROOT / ".env")
+    catalogue.normalize_existing_states()
     with ThreadingHTTPServer(("127.0.0.1", args.port), partial(Handler, directory=DIST)) as server:
-        print(f"YojanaSetu is running at http://127.0.0.1:{args.port}/", flush=True)
+        print(f"YojanaMitra is running at http://127.0.0.1:{args.port}/", flush=True)
         try:
             server.serve_forever()
         except KeyboardInterrupt:

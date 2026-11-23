@@ -23,12 +23,12 @@ SECTIONS = {
 }
 SCHEME_WORDS = r"scholarship|scheme|fellowship|stipend|financial assistance|fee reimbursement|tuition fee|freeship|yojana|subsidy|training programme|abhiyan|pension|mission|beti bachao beti padhao|kisan samman nidhi"
 RULES = (
-    ("state", r"(?:must|should) be (?:a )?(?:resident|domiciled resident) of (.+)"),
+    ("state", r"(?:must|should) be (?:a )?(?:resident|domiciled resident|domicile) of (.+)"),
     ("occupation", r"must be (?:an? )?(student|farmer|unemployed|employed|self-employed)"),
     ("education", r"must be (?:an? )?(undergraduate|postgraduate|diploma|class 10|class 12)(?: student)?"),
     ("category", r"(?:must|should) belong to (?:the )?(general|obc|sc|st|ews)(?: category)?"),
     ("age", r"must be (?:aged )?(?:between )?(\d{1,3}) (?:to|and|–|-) (\d{1,3}) years(?: old)?"),
-    ("income", r"(?:the )?(?:annual family income|family annual income) (?:must|should) (?:not exceed|be at most) (?:₹|rs\.?|inr)\s*(\d[\d,]*(?:\.\d+)?)(?:\s+(lakhs?))?"),
+    ("income", r"(?:the )?(?:annual family income|family annual income|total annual income of family / guardian) (?:must|should) (?:not exceed|not be more than|be at most) (?:₹|rs\.?|inr)?\s*(\d[\d,]*(?:\.\d+)?)(?:\s+(lakhs?))?"),
 )
 
 
@@ -79,7 +79,8 @@ def evaluate(profile: Profile, criteria: list[str], bounded: bool) -> tuple[str,
     ambiguity = r"\b(?:or|either|exemption|exception|relaxation|waiver)\b"
     ambiguous = False
     for criterion in criteria:
-        clause = re.sub(r"^(?:the )?(?:applicants?|candidates?|students?) ", "", criterion.rstrip(".").casefold())
+        clause = re.sub(r"^[a-z]\)\s+", "", criterion.rstrip(".").casefold())
+        clause = re.sub(r"^(?:the )?(?:applicants?|candidates?|students?) ", "", clause)
         clause = " ".join(clause.replace("less than or equal to", "at most").split())
         uncertain = bool(re.search(ambiguity, clause))
         ambiguous |= uncertain
@@ -157,7 +158,7 @@ def classify(source: Source, name: str, department: list[str]) -> tuple[str, str
     return "", label
 
 
-def discover(sources: list[Source], profile: Profile | None = None, *, query: str = "") -> list[Scheme]:
+def discover(sources: list[Source], profile: Profile | None = None, *, query: str = "", limit: int | None = 8) -> list[Scheme]:
     groups: dict[str, list[Source]] = {}
     for source in sources:
         name = scheme_name(source)
@@ -204,7 +205,7 @@ def discover(sources: list[Source], profile: Profile | None = None, *, query: st
         exactness = overlap / len(name_terms) if name_terms else 0
         return order[item.status], -overlap, -exactness, -len(item.fields)
 
-    return sorted(results, key=rank)[:8]
+    return sorted(results, key=rank)[:limit]
 
 
 def filter_schemes(schemes: list[Scheme], selected: str) -> list[Scheme]:
